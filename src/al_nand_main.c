@@ -38,6 +38,7 @@
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/nand.h>
 #include <linux/mtd/nand_ecc.h>
+#include <linux/mtd/rawnand.h>
 
 #include "al_hal_nand.h"
 
@@ -862,11 +863,7 @@ static int al_nand_probe(struct platform_device *pdev)
 
 	dev_set_drvdata(&pdev->dev, nand_dat);
 
-#if defined(CONFIG_MACH_QNAPTS) && defined(CONFIG_ARCH_ALPINE)
-    mtd->name = kasprintf(GFP_KERNEL, "mx_nand");
-#else
 	mtd->name = kasprintf(GFP_KERNEL, "Alpine nand flash");
-#endif
 	if (!mtd->name) {
 		pr_err("%s: error allocating name\n", __func__);
 		kfree(nand_dat);
