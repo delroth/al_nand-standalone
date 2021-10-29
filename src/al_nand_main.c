@@ -62,15 +62,14 @@ MODULE_AUTHOR("Annapurna Labs");
 
 struct nand_data {
 	struct nand_chip chip;
-	struct mtd_info mtd;
 	struct platform_device *pdev;
 
 	struct al_nand_ctrl_obj nand_obj;
 	uint8_t word_cache[4];
 	int cache_pos;
-	struct nand_ecclayout nand_oob;
-	uint32_t cw_size;
 	struct al_nand_ecc_config ecc_config;
+	struct al_nand_dev_properties dev_props;
+	struct al_nand_extra_dev_properties dev_ext_props;
 
 	/*** interrupts ***/
 	struct completion complete;
@@ -163,14 +162,6 @@ static void al_nand_timing_params_set(struct al_nand_device_timing *timing, uint
 
 static uint32_t wait_for_irq(struct nand_data *nand, uint32_t irq_mask);
 
-static inline struct nand_data *nand_data_get(
-				struct mtd_info *mtd)
-{
-	struct nand_chip *nand_chip = mtd->priv;
-
-	return nand_chip->priv;
-}
-
 static void nand_cw_size_get(
 			int		num_bytes,
 			uint32_t	*cw_size,
@@ -228,16 +219,15 @@ static void nand_wait_cmd_fifo_empty(
 		pr_err("Wait for empty cmd fifo for more than a sec!\n");
 }
 
-void nand_cmd_ctrl(struct mtd_info *mtd, int dat, unsigned int ctrl)
+void nand_cmd_ctrl(struct nand_chip *chip, int dat, unsigned int ctrl)
 {
 	uint32_t cmd;
 	enum al_nand_command_type type;
-	struct nand_data *nand;
+	struct nand_data *nand = nand_get_controller_data(chip);
 
 	if ((ctrl & (NAND_CLE | NAND_ALE)) == 0)
 		return;
 
-	nand = nand_data_get(mtd);
 	nand->cache_pos = -1;
 
 	type = ((ctrl & NAND_CTRL_CLE) == NAND_CTRL_CLE) ?
@@ -268,25 +258,23 @@ void nand_cmd_ctrl(struct mtd_info *mtd, int dat, unsigned int ctrl)
 	}
 }
 
-void nand_dev_select(struct mtd_info *mtd, int chipnr)
+void nand_dev_select(struct nand_chip *chip, int chipnr)
 {
-	struct nand_data *nand;
+	struct nand_data *nand = nand_get_controller_data(chip);
 
 	if (chipnr < 0)
 		return;
 
-	nand = nand_data_get(mtd);
 	al_nand_dev_select(&nand->nand_obj, chipnr);
 
 	dev_dbg(&nand->pdev->dev, "nand_dev_select: chipnr = %d\n", chipnr);
 }
 
-int nand_dev_ready(struct mtd_info *mtd)
+int nand_dev_ready(struct nand_chip *chip)
 {
+	struct nand_data *nand = nand_get_controller_data(chip);
 	int is_ready = 0;
-	struct nand_data *nand;
 
-	nand = nand_data_get(mtd);
 	is_ready = al_nand_dev_is_ready(&nand->nand_obj);
 
 	dev_dbg(&nand->pdev->dev, "nand_dev_ready: ready = %d\n", is_ready);
@@ -297,19 +285,17 @@ int nand_dev_ready(struct mtd_info *mtd)
 /*
  * read len bytes from the nand device.
  */
-void nand_read_buff(struct mtd_info *mtd, uint8_t *buf, int len)
+void nand_read_buff(struct nand_chip *chip, uint8_t *buf, int len)
 {
+	struct nand_data *nand = nand_get_controller_data(chip);
 	uint32_t cw_size;
 	uint32_t cw_count;
-	struct nand_data *nand;
 	uint32_t intr_status;
 	void __iomem *data_buff;
 
-	nand = nand_data_get(mtd);
-
 	dev_dbg(&nand->pdev->dev, "nand_read_buff: read len = %d\n", len);
 
-	cw_size = nand->cw_size;
+	cw_size = chip->ecc.size;
 
 	BUG_ON(len & 3);
 	BUG_ON(nand->cache_pos != -1);
@@ -340,18 +326,16 @@ void nand_read_buff(struct mtd_info *mtd, uint8_t *buf, int len)
  * read byte is not supported by the controller so this function reads
  * 4 bytes as a cache and use it in the next calls.
  */
-uint8_t nand_read_byte_from_fifo(struct mtd_info *mtd)
+uint8_t nand_read_byte_from_fifo(struct nand_chip *chip)
 {
 	uint8_t ret_val;
-	struct nand_data *nand;
-
-	nand = nand_data_get(mtd);
+	struct nand_data *nand = nand_get_controller_data(chip);
 
 	dev_dbg(&nand->pdev->dev,
 			"%s: cache_pos = %d", __func__, nand->cache_pos);
 
 	if (nand->cache_pos == -1) {
-		nand_read_buff(mtd, nand->word_cache, 4);
+		nand_read_buff(chip, nand->word_cache, 4);
 		nand->cache_pos = 0;
 	}
 
@@ -363,26 +347,16 @@ uint8_t nand_read_byte_from_fifo(struct mtd_info *mtd)
 	dev_dbg(&nand->pdev->dev, "%s: return = 0x%x\n", __func__, ret_val);
 	return ret_val;
 }
-
-u16 nand_read_word(struct mtd_info *mtd)
-{
-	/* shouldn't be called */
-	BUG();
-
-	return 0;
-}
 /*
  * writing buffer to the nand device.
  * this func will wait for the write to be complete
  */
-void nand_write_buff(struct mtd_info *mtd, const uint8_t *buf, int len)
+void nand_write_buff(struct nand_chip *chip, const uint8_t *buf, int len)
 {
-	uint32_t cw_size = ((struct nand_chip *)mtd->priv)->ecc.size;
+	uint32_t cw_size = chip->ecc.size;
 	uint32_t cw_count;
-	struct nand_data *nand;
+	struct nand_data *nand = nand_get_controller_data(chip);
 	void __iomem *data_buff;
-
-	nand = nand_data_get(mtd);
 
 	dev_dbg(&nand->pdev->dev, "nand_write_buff: len = %d start: 0x%x%x%x\n",
 			len, buf[0], buf[1], buf[2]);
@@ -450,17 +424,18 @@ static inline int is_empty_oob(uint8_t *oob, int len)
  * read page with HW ecc support (corrected and uncorrected stat will be
  * updated).
  */
-int ecc_read_page(struct mtd_info *mtd, struct nand_chip *chip,
-			uint8_t *buf, int oob_required, int page)
+int ecc_read_page(struct nand_chip *chip,
+		  uint8_t *buf, int oob_required, int page)
 {
-	int bytes = chip->ecc.layout->eccbytes;
-	struct nand_data *nand;
+	struct nand_data *nand = nand_get_controller_data(chip);
+	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_oob_region ecc_region;
 	int uncorr_err_count = 0;
 	int corr_err_count = 0;
 
-	nand = nand_data_get(mtd);
-
 	dev_dbg(&nand->pdev->dev, "ecc_read_page: read page %d\n", page);
+
+	mtd_ooblayout_ecc(mtd, 0, &ecc_region);
 
 	/* Clear TX/RX ECC state machine */
 	al_nand_tx_set_enable(&nand->nand_obj, 1);
@@ -474,18 +449,18 @@ int ecc_read_page(struct mtd_info *mtd, struct nand_chip *chip,
 	BUG_ON(oob_required);
 
 	/* First need to read the OOB to the controller to calc the ecc */
-	chip->cmdfunc(mtd, NAND_CMD_READOOB,
-			chip->ecc.layout->eccpos[0], page);
+	chip->legacy.cmdfunc(chip, NAND_CMD_READOOB,
+			     ecc_region.offset, page);
 
 	nand_send_byte_count_command(&nand->nand_obj,
 				AL_NAND_COMMAND_TYPE_SPARE_READ_COUNT,
-				bytes);
+				ecc_region.length);
 
 	/* move to the start of the page to read the data */
-	chip->cmdfunc(mtd, NAND_CMD_RNDOUT, 0x00, -1);
+	chip->legacy.cmdfunc(chip, NAND_CMD_RNDOUT, 0x00, -1);
 
 	/* read the buffer (after ecc correction) */
-	chip->read_buf(mtd, buf, mtd->writesize);
+	chip->legacy.read_buf(chip, buf, mtd->writesize);
 
 	uncorr_err_count = al_nand_uncorr_err_get(&nand->nand_obj);
 	corr_err_count = al_nand_corr_err_get(&nand->nand_obj);
@@ -500,7 +475,7 @@ int ecc_read_page(struct mtd_info *mtd, struct nand_chip *chip,
 			 * errors while trying to read an empty page.
 			 * to avoid error messages and failures in the upper
 			 * layer, don't update the statistics in this case */
-			chip->read_buf(mtd, nand->oob, mtd->oobsize);
+			chip->legacy.read_buf(chip, nand->oob, mtd->oobsize);
 
 			if (is_empty_oob(nand->oob, mtd->oobsize)){
 				uncorr_err = false;
@@ -527,8 +502,8 @@ int ecc_read_page(struct mtd_info *mtd, struct nand_chip *chip,
 	return 0;
 }
 
-int ecc_read_subpage(struct mtd_info *mtd, struct nand_chip *chip,
-			uint32_t offs, uint32_t len, uint8_t *buf, int page)
+int ecc_read_subpage(struct nand_chip *chip,
+		     uint32_t offs, uint32_t len, uint8_t *buf, int page)
 {
 	pr_err("ERROR: read subpage not supported!\n");
 	return -1;
@@ -537,25 +512,28 @@ int ecc_read_subpage(struct mtd_info *mtd, struct nand_chip *chip,
  * program page with HW ecc support.
  * this function is called after the commands and adderess for this page sent.
  */
-int ecc_write_page(struct mtd_info *mtd, struct nand_chip *chip,
-			const uint8_t *buf, int oob_required)
+int ecc_write_page(struct nand_chip *chip,
+		   const uint8_t *buf, int oob_required, int page)
 {
-	int bytes = chip->ecc.layout->eccbytes;
+	struct nand_data *nand = nand_get_controller_data(chip);
+	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct mtd_oob_region ecc_region;
 	uint32_t cmd;
-	struct nand_data *nand;
-
-	nand = nand_data_get(mtd);
 
 	dev_dbg(&nand->pdev->dev, "ecc_write_page\n");
 
 	BUG_ON(oob_required);
 
+	mtd_ooblayout_ecc(mtd, 0, &ecc_region);
+
+	nand_prog_page_begin_op(chip, page, 0, NULL, 0);
+
 	al_nand_ecc_set_enabled(&nand->nand_obj, 1);
 
-	nand_write_buff(mtd, buf, mtd->writesize);
+	nand_write_buff(chip, buf, mtd->writesize);
 
-	chip->cmdfunc(mtd, NAND_CMD_RNDIN,
-			mtd->writesize + chip->ecc.layout->eccpos[0], -1);
+	chip->legacy.cmdfunc(chip, NAND_CMD_RNDIN,
+			     mtd->writesize + ecc_region.offset, -1);
 
 	cmd = AL_NAND_CMD_SEQ_ENTRY(
 			AL_NAND_COMMAND_TYPE_WAIT_CYCLE_COUNT,
@@ -566,10 +544,11 @@ int ecc_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 
 	al_nand_cmd_single_execute(&nand->nand_obj, cmd);
 
-	dev_dbg(&nand->pdev->dev, "%s: spare bytes: %d\n", __func__, bytes);
+	dev_dbg(&nand->pdev->dev, "%s: spare bytes: %d\n", __func__,
+		ecc_region.length);
 	nand_send_byte_count_command(&nand->nand_obj,
 				AL_NAND_COMMAND_TYPE_SPARE_WRITE_COUNT,
-				bytes);
+				ecc_region.length);
 
 	nand_wait_cmd_fifo_empty(nand);
 
@@ -578,7 +557,7 @@ int ecc_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 
 	al_nand_ecc_set_enabled(&nand->nand_obj, 0);
 
-	return 0;
+	return nand_prog_page_end_op(chip);
 }
 
 /******************************************************************************/
@@ -746,14 +725,15 @@ static int nand_resources_get_and_map(
 }
 
 static void nand_onfi_config_set(
-		struct mtd_info *mtd,
+		struct nand_chip *chip,
 		struct al_nand_dev_properties *device_properties,
 		struct al_nand_ecc_config *ecc_config)
 {
-	struct nand_chip *nand = mtd->priv;
+	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct onfi_params *onfi = chip->parameters.onfi;
 	enum al_nand_device_page_size onfi_page_size;
 	int i;
-	uint16_t async_timing_mode = nand->onfi_params.async_timing_mode;
+	uint16_t async_timing_mode = onfi->async_timing_mode;
 
 	/* Addressing RMN: 2903 */
 	device_properties->timingMode = AL_NAND_DEVICE_TIMING_MODE_MANUAL;
@@ -768,63 +748,107 @@ static void nand_onfi_config_set(
 		;
 	al_nand_timing_params_set(&device_properties->timing, i);
 
-	nand_set_timing_mode(nand->priv, device_properties->timingMode);
+	nand_set_timing_mode(chip->priv, device_properties->timingMode);
 
-	device_properties->num_col_cyc = nand->page_shift;
-	device_properties->num_row_cyc = nand->chip_shift;
+	device_properties->num_col_cyc = chip->page_shift;
+	device_properties->num_row_cyc = chip->chip_shift;
 	onfi_page_size = page_size_bytes_convert(mtd->writesize);
 	device_properties->pageSize = onfi_page_size;
 
-	if (nand->ecc_strength_ds == 1) {
+	if (chip->ecc.strength == 1) {
 		ecc_config->algorithm = AL_NAND_ECC_ALGORITHM_HAMMING;
-	} else if (nand->ecc_strength_ds > 1) {
+	} else if (chip->ecc.strength > 1) {
 		ecc_config->algorithm = AL_NAND_ECC_ALGORITHM_BCH;
 		ecc_config->num_corr_bits =
-			bch_num_bits_convert(nand->ecc_strength_ds);
+			bch_num_bits_convert(chip->ecc.strength);
 	}
 }
 
-static void nand_ecc_config(
-		struct nand_chip *nand,
-		struct nand_ecc_ctrl *ecc,
-		struct nand_ecclayout *layout,
-		uint32_t oob_size,
-		uint32_t hw_ecc_enabled,
-		uint32_t ecc_loc)
+static int al_nand_ooblayout_ecc(struct mtd_info *mtd, int section,
+				 struct mtd_oob_region *oobregion)
 {
-	if (hw_ecc_enabled != 0) {
-		ecc->mode = NAND_ECC_HW;
+	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_data *nand = nand_get_controller_data(chip);
+	int ecc_loc;
 
-		memset(layout, 0, sizeof(struct nand_ecclayout));
-		layout->eccbytes = oob_size - ecc_loc;
-		layout->oobfree[0].offset = 2;
-		layout->oobfree[0].length = ecc_loc - 2;
-		layout->eccpos[0] = ecc_loc;
+	if (section > 0)
+		return -ERANGE;
 
-		ecc->layout = layout;
+	ecc_loc = nand->ecc_config.spareAreaOffset -
+		nand->dev_ext_props.pageSize;
+
+	oobregion->offset = ecc_loc;
+	oobregion->length = mtd->oobsize - ecc_loc;
+
+	return 0;
+}
+
+static int al_nand_ooblayout_free(struct mtd_info *mtd, int section,
+				  struct mtd_oob_region *oobregion)
+{
+	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_data *nand = nand_get_controller_data(chip);
+	int ecc_loc;
+
+	if (section > 0)
+		return -ERANGE;
+
+	ecc_loc = nand->ecc_config.spareAreaOffset -
+		nand->dev_ext_props.pageSize;
+
+	oobregion->offset = 2;
+	oobregion->length = ecc_loc - 2;
+
+	return 0;
+}
+
+static const struct mtd_ooblayout_ops al_nand_ooblayout_ops = {
+	.ecc = al_nand_ooblayout_ecc,
+	.free = al_nand_ooblayout_free,
+};
+
+static int al_nand_attach_chip(struct nand_chip *chip)
+{
+	struct nand_data *nand = nand_get_controller_data(chip);
+	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct nand_ecc_ctrl *ecc = &chip->ecc;
+	const struct nand_ecc_props *requirements =
+		nanddev_get_ecc_requirements(&chip->base);
+
+	if (nand->dev_ext_props.eccIsEnabled != 0) {
+		ecc->engine_type = NAND_ECC_ENGINE_TYPE_ON_HOST;
+		ecc->placement = NAND_ECC_PLACEMENT_INTERLEAVED;
+		ecc->size = mtd->writesize;
+		ecc->strength = requirements->strength;
+		ecc->bytes = mtd->oobsize;
+
+		mtd_set_ooblayout(mtd, &al_nand_ooblayout_ops);
 
 		ecc->read_page = ecc_read_page;
 		ecc->read_subpage = ecc_read_subpage;
 		ecc->write_page = ecc_write_page;
-
-		ecc->strength = nand->ecc_strength_ds;
-		ecc->size = nand->ecc_step_ds;
 	} else {
-		ecc->mode = NAND_ECC_NONE;
+		ecc->engine_type = NAND_ECC_ENGINE_TYPE_NONE;
+		ecc->size = 512 << nand->ecc_config.messageSize;
 	}
+
+	nand_onfi_config_set(chip, &nand->dev_props, &nand->ecc_config);
+
+	return 0;
 }
+
+static const struct nand_controller_ops al_nand_controller_ops = {
+	.attach_chip = al_nand_attach_chip,
+};
 
 static int al_nand_probe(struct platform_device *pdev)
 {
 	struct mtd_info *mtd;
 	struct nand_chip *nand;
 	struct nand_data *nand_dat;
-	struct al_nand_dev_properties device_properties;
-	struct al_nand_extra_dev_properties dev_ext_props;
 	int ret = 0;
 	void __iomem *nand_base;
 	void __iomem *pbs_base;
-	struct mtd_part_parser_data ppdata = {};
 	struct clk *clk;
 
 	nand_dat = kzalloc(sizeof(struct nand_data), GFP_KERNEL);
@@ -836,21 +860,16 @@ static int al_nand_probe(struct platform_device *pdev)
 	pr_info("%s: AnnapurnaLabs nand driver\n", __func__);
 
 	nand = &nand_dat->chip;
-	mtd = &nand_dat->mtd;
-	mtd->priv = nand;
+	mtd = nand_to_mtd(nand);
+
+	nand_set_controller_data(nand, nand_dat);
+	nand_set_flash_node(nand, pdev->dev.of_node);
+	mtd->dev.parent = &pdev->dev;
 
 	nand_dat->cache_pos = -1;
-	nand->priv = nand_dat;
 	nand_dat->pdev = pdev;
 
 	dev_set_drvdata(&pdev->dev, nand_dat);
-
-	mtd->name = kasprintf(GFP_KERNEL, "Alpine nand flash");
-	if (!mtd->name) {
-		pr_err("%s: error allocating name\n", __func__);
-		kfree(nand_dat);
-		return -ENOMEM;
-	}
 
 	ret = nand_resources_get_and_map(pdev, &nand_base, &pbs_base);
 	if (ret != 0) {
@@ -887,71 +906,48 @@ static int al_nand_probe(struct platform_device *pdev)
 
 	nand->options = NAND_NO_SUBPAGE_WRITE;
 
-	nand->cmd_ctrl = nand_cmd_ctrl;
-	nand->read_byte = nand_read_byte_from_fifo;
-	nand->read_word = nand_read_word;
-	nand->read_buf = nand_read_buff;
-	nand->dev_ready = nand_dev_ready;
-	nand->write_buf = nand_write_buff;
-	nand->select_chip = nand_dev_select;
+	nand->legacy.cmd_ctrl = nand_cmd_ctrl;
+	nand->legacy.read_byte = nand_read_byte_from_fifo;
+	nand->legacy.read_buf = nand_read_buff;
+	nand->legacy.dev_ready = nand_dev_ready;
+	nand->legacy.write_buf = nand_write_buff;
+	nand->legacy.select_chip = nand_dev_select;
 
 	if (0 != al_nand_properties_decode(
 					pbs_base,
-					&device_properties,
+					&nand_dat->dev_props,
 					&nand_dat->ecc_config,
-					&dev_ext_props)) {
+					&nand_dat->dev_ext_props)) {
 		pr_err("%s: nand_properties_decode failed\n", __func__);
 		ret = -EIO;
 		goto err;
 	}
 
-	/* must be set before scan_ident cause it uses read_buff */
-	nand->ecc.size = 512 << nand_dat->ecc_config.messageSize;
-	nand_dat->cw_size = 512 << nand_dat->ecc_config.messageSize;
-
-	ret = nand_scan_ident(mtd, 1, NULL);
+	nand->legacy.dummy_controller.ops = &al_nand_controller_ops;
+	ret = nand_scan(nand, 1);
 	if (ret) {
-		pr_err("%s: nand_scan_ident failed\n", __func__);
+		pr_err("%s: nand_scan failed\n", __func__);
 		goto err;
 	}
 
 	BUG_ON(mtd->oobsize > AL_NAND_MAX_OOB_SIZE);
 
-	nand_onfi_config_set(mtd, &device_properties, &nand_dat->ecc_config);
-
-	nand_ecc_config(
-		nand,
-		&nand->ecc,
-		&nand_dat->nand_oob,
-		mtd->oobsize,
-		dev_ext_props.eccIsEnabled,
-		(nand_dat->ecc_config.spareAreaOffset - dev_ext_props.pageSize));
-
 	if (0 != al_nand_dev_config(
 				&nand_dat->nand_obj,
-				&device_properties,
+				&nand_dat->dev_props,
 				&nand_dat->ecc_config)) {
 		pr_err("dev_config failed\n");
 		ret = -EIO;
 		goto err;
 	}
 
-	ret = nand_scan_tail(mtd);
-	if (ret) {
-		pr_err("%s: scan_tail failed\n", __func__);
-		goto err;
-	}
+	mtd->name = AL_NAND_NAME;
 
-	/* parse the device tree looking for partitions declaration.
-	 * if no partition declaration will be found, 1 partition will be
-	 * created for the all device */
-	ppdata.of_node = pdev->dev.of_node;
-	mtd_device_parse_register(mtd, NULL, &ppdata, NULL, 0);
+	mtd_device_parse_register(mtd, NULL, NULL, NULL, 0);
 
 	return 0;
 
 err:
-	kfree(nand_dat->mtd.name);
 	kfree(nand_dat);
 	return ret;
 }
@@ -962,9 +958,9 @@ static int al_nand_remove(struct platform_device *pdev)
 
 	dev_dbg(&nand_dat->pdev->dev, "%s: nand driver removed\n", __func__);
 
-	nand_release(&nand_dat->mtd);
+	mtd_device_unregister(nand_to_mtd(&nand_dat->chip));
+	nand_cleanup(&nand_dat->chip);
 
-	kfree(nand_dat->mtd.name);
 	kfree(nand_dat);
 
 	return 0;
