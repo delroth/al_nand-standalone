@@ -59,7 +59,6 @@ MODULE_AUTHOR("Annapurna Labs");
 #define ONFI_ROW_ADDR_CYCLE_POS  0
 
 #define AL_NAND_MAX_CHIPS 1
-#define AL_NAND_ECC_SUPPORT
 
 struct nand_data {
 	struct nand_chip chip;
@@ -423,7 +422,6 @@ void nand_write_buff(struct mtd_info *mtd, const uint8_t *buf, int len)
 /******************************************************************************/
 /**************************** ecc functions ***********************************/
 /******************************************************************************/
-#ifdef AL_NAND_ECC_SUPPORT
 static inline int is_empty_oob(uint8_t *oob, int len)
 {
 	int flips = 0;
@@ -582,7 +580,6 @@ int ecc_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 
 	return 0;
 }
-#endif
 
 /******************************************************************************/
 /****************************** interrupts ************************************/
@@ -778,7 +775,6 @@ static void nand_onfi_config_set(
 	onfi_page_size = page_size_bytes_convert(mtd->writesize);
 	device_properties->pageSize = onfi_page_size;
 
-#ifdef AL_NAND_ECC_SUPPORT
 	if (nand->ecc_strength_ds == 1) {
 		ecc_config->algorithm = AL_NAND_ECC_ALGORITHM_HAMMING;
 	} else if (nand->ecc_strength_ds > 1) {
@@ -786,7 +782,6 @@ static void nand_onfi_config_set(
 		ecc_config->num_corr_bits =
 			bch_num_bits_convert(nand->ecc_strength_ds);
 	}
-#endif
 }
 
 static void nand_ecc_config(
@@ -797,7 +792,6 @@ static void nand_ecc_config(
 		uint32_t hw_ecc_enabled,
 		uint32_t ecc_loc)
 {
-#ifdef AL_NAND_ECC_SUPPORT
 	if (hw_ecc_enabled != 0) {
 		ecc->mode = NAND_ECC_HW;
 
@@ -818,17 +812,6 @@ static void nand_ecc_config(
 	} else {
 		ecc->mode = NAND_ECC_NONE;
 	}
-#else
-	memset(layout, 0, sizeof(struct nand_ecclayout));
-	layout->eccbytes = oob_size - ecc_loc;
-	layout->oobfree[0].offset = 2;
-	layout->oobfree[0].length = ecc_loc - 2;
-	layout->eccpos[0] = ecc_loc;
-
-	ecc->layout = layout;
-
-	ecc->mode = NAND_ECC_NONE;
-#endif
 }
 
 static int al_nand_probe(struct platform_device *pdev)
