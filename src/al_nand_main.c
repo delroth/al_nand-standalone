@@ -724,7 +724,7 @@ static int nand_resources_get_and_map(
 	struct device_node *np;
 
 	np = of_find_compatible_node(
-			NULL, NULL, "annapurna-labs,al-nand");
+			NULL, NULL, "al,alpine-nand");
 
 	*nand_base = of_iomap(np, 0);
 	if (!(*nand_base)) {
@@ -733,7 +733,7 @@ static int nand_resources_get_and_map(
 	}
 
 	np = of_find_compatible_node(
-			NULL, NULL, "annapurna-labs,al-pbs");
+			NULL, NULL, "al,alpine-pbs");
 
 	*pbs_base = of_iomap(np, 0);
 	if (!(*pbs_base)) {
