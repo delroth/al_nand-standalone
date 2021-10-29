@@ -967,13 +967,13 @@ static int al_nand_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id al_nand_match[] = {
-	{ .compatible = "annapurna-labs,al-nand", },
+	{ .compatible = "al,alpine-nand", },
 	{}
 };
 
 static struct platform_driver al_nand_driver = {
 	.driver = {
-		.name = "annapurna-labs,al-nand",
+		.name = "al,alpine-nand",
 		.owner = THIS_MODULE,
 		.of_match_table = al_nand_match,
 	},
