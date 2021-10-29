@@ -876,7 +876,7 @@ static int al_nand_probe(struct platform_device *pdev)
 		goto err;
 	}
 
-	ret = al_nand_init(&nand_dat->nand_obj,	nand_base, NULL, 0);
+	ret = al_nand_init(&nand_dat->nand_obj,	nand_base);
 	if (ret != 0) {
 		pr_err("nand init failed\n");
 		goto err;

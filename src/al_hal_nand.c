@@ -137,9 +137,7 @@ static void _al_nand_init(struct al_nand_ctrl_obj *obj)
 
 int al_nand_init(
 	struct al_nand_ctrl_obj	*obj,
-	void __iomem		*nand_base,
-	struct al_ssm_dma	*raid_dma,
-	uint32_t		raid_dma_qid)
+	void __iomem		*nand_base)
 {
 	int status = 0;
 	uint8_t __iomem *nand_base_ptr = (uint8_t __iomem *) nand_base;
@@ -153,39 +151,7 @@ int al_nand_init(
 	obj->cmd_buff_base = nand_base_ptr + CMD_BUFF_OFFSET;
 	obj->data_buff_base = nand_base_ptr + DATA_BUFF_OFFSET;
 
-	obj->raid_dma = raid_dma;
-	obj->raid_dma_qid = raid_dma_qid;
-
 	obj->no_wrapper = AL_FALSE;
-
-	_al_nand_init(obj);
-
-	return status;
-}
-
-int al_nand_init_no_wrapper(
-	struct al_nand_ctrl_obj	*obj,
-	void __iomem		*ctrl_base,
-	void __iomem		*wrapper_base,
-	struct al_ssm_dma	*raid_dma,
-	uint32_t		raid_dma_qid)
-{
-	int status = 0;
-
-	al_assert(obj);
-	al_assert(ctrl_base);
-	al_assert(wrapper_base);
-
-	obj->regs_base = (struct al_nand_regs *)ctrl_base;
-
-	obj->wrap_regs_base = (struct al_nand_wrap_regs *)wrapper_base;
-	obj->cmd_buff_base = &obj->regs_base->command_buffer_reg;
-	obj->data_buff_base = &obj->regs_base->data_buffer_reg;
-
-	obj->raid_dma = raid_dma;
-	obj->raid_dma_qid = raid_dma_qid;
-
-	obj->no_wrapper = AL_TRUE;
 
 	_al_nand_init(obj);
 

@@ -336,9 +336,6 @@ struct al_nand_ctrl_obj {
 	void				*cmd_buff_base;
 	void				*data_buff_base;
 
-	struct al_ssm_dma		*raid_dma;
-	uint32_t			raid_dma_qid;
-
 	struct al_nand_dev_properties	dev_properties;
 	struct al_nand_ecc_config	ecc_config;
 	int				current_dev_index;
