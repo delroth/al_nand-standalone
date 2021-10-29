@@ -73,7 +73,6 @@ struct nand_data {
 
 	/*** interrupts ***/
 	struct completion complete;
-	spinlock_t irq_lock;
 	uint32_t irq_status;
 	int irq;
 
@@ -570,7 +569,6 @@ static void nand_interrupt_init(struct nand_data *nand)
 	int ret;
 
 	init_completion(&nand->complete);
-	spin_lock_init(&nand->irq_lock);
 	nand->irq_status = 0;
 	al_nand_int_disable(&nand->nand_obj, 0xffff);
 
