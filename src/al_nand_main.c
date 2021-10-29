@@ -572,8 +572,8 @@ static void nand_interrupt_init(struct nand_data *nand)
 	nand->irq_status = 0;
 	al_nand_int_disable(&nand->nand_obj, 0xffff);
 
-	ret = request_irq(nand->irq, al_nand_isr, IRQF_SHARED,
-				AL_NAND_NAME, nand);
+	ret = devm_request_irq(&nand->pdev->dev, nand->irq, al_nand_isr,
+			       IRQF_SHARED, AL_NAND_NAME, nand);
 	if (ret)
 		pr_info("failed to request irq. rc %d\n", ret);
 }
